@@ -7,6 +7,7 @@
 #                       #
 # Brian Hooper          #
 # 06/08/19              #
+# Modified: Auto Match  #
 #########################
 
 from PyQt5.QtWidgets import *
@@ -16,6 +17,16 @@ import sys
 from pathlib import Path
 import subprocess
 from multiprocessing import Process, Pipe
+import re
+
+
+def extract_episode_number(filename):
+    """
+    Extract the episode number from a filename (e.g., E01, EP01, etc.).
+    Returns normalized format (e.g., 'e01').
+    """
+    match = re.search(r'e(?:p)?(\d{2,})', str(filename), re.IGNORECASE)
+    return f"e{match.group(1)}" if match else None
 
 
 def execute_command(command_string, video_path, temp_path):
@@ -250,6 +261,15 @@ class ListWidget(QListWidget):
             self.setCurrentRow(row)
         self.update()
 
+    def clear_all(self):
+        """
+        Clears all items from the list
+        :return: None
+        """
+        self.items = []
+        self.items_long = []
+        self.update_list()
+
 
 def process_output(messages, message_list):
     """
@@ -318,7 +338,9 @@ class MainPanel(QWidget):
         self.add_button("Add", self.add_subtitles, 4, 1)
         self.add_button("Remove", self.subtitles.remove_item, 5, 1)
 
-        self.add_button("Merge subtitles", self.merge, 6, 0, 1, 2)
+        # Add Auto Match button spanning both columns
+        self.add_button("Auto Match", self.auto_match, 6, 0, 1, 2)
+        self.add_button("Merge subtitles", self.merge, 7, 0, 1, 2)
 
     def add_button(self, label, connect_function, row, column, row_span=1, col_span=1):
         """
@@ -373,6 +395,61 @@ class MainPanel(QWidget):
         options |= QFileDialog.DontUseNativeDialog
         files, _ = QFileDialog.getOpenFileNames(self, "QFileDialog.getOpenFileNames()", "", filetypes, options=options)
         return files
+
+    def auto_match(self):
+        """
+        Automatically matches videos with subtitles based on episode numbers
+        :return: None
+        """
+        if len(self.videos.items_long) == 0:
+            QMessageBox.about(self, "Error", "No video files added. Please add videos first.")
+            return
+        
+        if len(self.subtitles.items_long) == 0:
+            QMessageBox.about(self, "Error", "No subtitle files added. Please add subtitles first.")
+            return
+
+        # Create a map of episode numbers to subtitle paths
+        subtitle_map = {}
+        for sub_path in self.subtitles.items_long:
+            episode_num = extract_episode_number(Path(sub_path).name)
+            if episode_num:
+                subtitle_map[episode_num] = sub_path
+
+        # Match videos with subtitles
+        matched_videos = []
+        matched_subtitles = []
+        unmatched = []
+
+        for video_path in self.videos.items_long:
+            episode_num = extract_episode_number(Path(video_path).name)
+            if episode_num and episode_num in subtitle_map:
+                matched_videos.append(video_path)
+                matched_subtitles.append(subtitle_map[episode_num])
+            else:
+                unmatched.append(Path(video_path).name)
+
+        # Update the lists
+        self.videos.clear_all()
+        self.subtitles.clear_all()
+
+        for video, subtitle in zip(matched_videos, matched_subtitles):
+            self.videos.add_item(Path(video).name, video)
+            self.subtitles.add_item(Path(subtitle).name, subtitle)
+
+        self.videos.update_list()
+        self.subtitles.update_list()
+
+        # Show results
+        message = f"Auto Match Complete!\n\n"
+        message += f"Matched: {len(matched_videos)} video(s)\n"
+        if unmatched:
+            message += f"Unmatched: {len(unmatched)} video(s)\n\n"
+            message += "Unmatched files:\n" + "\n".join(unmatched[:5])
+            if len(unmatched) > 5:
+                message += f"\n... and {len(unmatched) - 5} more"
+
+        QMessageBox.about(self, "Auto Match Results", message)
 
     def splash(self, videos):
         """
